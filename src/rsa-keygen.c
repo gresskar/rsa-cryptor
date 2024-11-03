@@ -41,7 +41,7 @@ int main(int argc, char **argv) {
         (void) fprintf(stderr, "keysize should not be less than 8!\n");
         return EXIT_FAILURE;
     }
-    printf("keysize: %u\n", keysize);
+    printf("keysize: %u\n\n", keysize);
 
     // Generate P
     mpz_t p;

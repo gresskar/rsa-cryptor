@@ -2,9 +2,8 @@
 
 ## TODO
 
-- Replace `stdint.h` with `gmp.h`
 - Implement `rsa-encrypt`, `rsa-decrypt`, `rsa-sign` & `rsa-verify`
-- Modify `rsa-keygen` to take bitsize, and to export the keypair properly
+- Modify `rsa-keygen` to to export the keypair in PEM format
 
 ## Building
 
