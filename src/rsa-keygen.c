@@ -1,158 +1,122 @@
 #include "rsa.h"
 
-uint64_t extended_gcd(uint64_t n1, uint64_t n2, uint64_t *x, uint64_t *y)
-{
-    if (n1 == 0)
-    {
-        *x = 0;
-        *y = 1;
-        return n2;
-    }
-    uint64_t x1, y1;
-    uint64_t gcd = extended_gcd(n2 % n1, n1, &x1, &y1);
-    *x = y1 - (n2 / n1) * x1;
-    *y = x1;
-    return gcd;
+bool is_prime(mpz_t number) {
+    return mpz_probab_prime_p(number, 50) > 0;
 }
 
-uint64_t gcd(uint64_t n1, uint64_t n2)
-{
-    uint64_t gcd = 0;
-    
-    /* this segfaults 
-    for (uint64_t i = 0; i <= n1 && i <= n2; ++i)
-    {
-        if (n1 % i == 0 && n2 % i == 0)
-            gcd_value = i;
+void generate_prime(mpz_t number, uint16_t bitsize) {
+    uint32_t seed;
+    if (getrandom(&seed, sizeof(seed), GRND_RANDOM) == -1) {
+        (void) fprintf(stderr, "warning: getrandom() failed! falling back to less secure time()...\n");
+        seed = (uint32_t) time(NULL);
     }
-    */
-   while (n1 != n2)
-   {
-    if (n1 > n2)
-        gcd -= n2;
-    else
-        gcd -= n1;
-   }
-    
-    return gcd;
+    (void) srand(seed);
+
+    gmp_randstate_t state;
+    gmp_randinit_mt(state);
+    gmp_randseed_ui(state, rand());
+
+    mpz_set_ui(number, 0);
+
+    do {
+        // Generate a random odd number
+        mpz_urandomb(number, state, bitsize);
+        mpz_setbit(number, 0);
+    } while (!is_prime(number));
+
+    // Find the next prime candidate, if needed
+    while (!is_prime(number)) {
+        mpz_nextprime(number, number);
+    }
+
+    gmp_randclear(state);
 }
 
-uint64_t lcm(uint64_t n1, uint64_t n2)
-{
-    uint64_t lcm = 0;
-
-    uint64_t max = (n1 > n2) ? n1 : n2;
-    lcm = max;
-    while (lcm % n1 != 0 || lcm % n2 != 0)
-    {
-        lcm += max;
+int main(int argc, char **argv) {
+    uint16_t keysize = 4096;
+    if (argc >= 2) {
+        keysize = strtoul(argv[1], NULL, 10);
     }
-
-    return lcm;
-}
-
-uint64_t mod_inverse(uint64_t n1, uint64_t n2)
-{
-    uint64_t x = 0, y = 0;
-    uint64_t gcd = extended_gcd(n1, n2, &x, &y);
-    if (gcd != 1) {
-        // Inverse doesn't exist
-        return -1;
-    } else {
-        // Make x positive
-        return (x % n2 + n2) % n2;
-    }
-}
-
-uint64_t generate_random_prime(void)
-{
-    uint64_t number = 0;
-
-    FILE *fp = fopen("/dev/urandom", "rt");
-    if (fp == NULL)
-    {
-        (void) fprintf(stderr, "fopen(\"/dev/urandom\") failed\n");
-        return 0;
-    }
-
-    bool is_prime = false;
-
-    while (!is_prime)
-    {
-        // Generate random number
-        if (fread(&number, sizeof(uint32_t), 1, fp) <= 0)
-        {
-            (void) fprintf(stderr, "fread() failed\n");
-            (void) fclose(fp);
-            return 0;
-        }
-
-        // Don't bother with miniscule numbers
-        if (number <= 2)
-            is_prime = false;
-
-        // Is our number a prime number?
-        bool found = true;
-        for (uint64_t i = 2; i <= sqrt(number); ++i)
-        {
-            if (number % i == 0)
-            {
-                found = false;
-                is_prime = false;
-            }
-        }
-        is_prime = (found ? true : false);
-    }
-
-    (void) fclose(fp);
- 
-    return number;
-}
-
-int main(void)
-{
-    (void) fprintf(stdout, "Generating RSA keypair...\n");
-
-    FILE *fp_pubkey = fopen("data/pubkey.asc", "wt");
-    if (fp_pubkey == NULL)
-    {
-        (void) fprintf(stderr, "fopen(\"data/pubkey.asc\") failed\n");
+    if (keysize < 8) {
+        (void) fprintf(stderr, "keysize should not be less than 8!\n");
         return EXIT_FAILURE;
     }
+    printf("keysize: %u\n", keysize);
 
-    FILE *fp_privkey = fopen("data/privkey.asc", "wt");
-    if (fp_privkey == NULL)
-    {
-        (void) fprintf(stderr, "fopen(\"data/privkey.asc\") failed\n");
-        return EXIT_FAILURE;
+    // Generate P
+    mpz_t p;
+    mpz_init(p);
+    (void) generate_prime(p, keysize);
+    gmp_printf("p: %Zd\n\n", p);
+    
+    // Generate Q
+    mpz_t q;
+    mpz_init(q);
+    (void) generate_prime(q, keysize);
+    gmp_printf("q: %Zd\n\n", q);
+
+    // Make sure Q is not equal to P
+    while (mpz_cmp(p, q) == 0) {
+        (void) generate_prime(q, keysize);
     }
 
-    // Generate P and Q
-    uint64_t p = generate_random_prime();
-    uint64_t q = generate_random_prime();
-    
     // Calculate N
-    uint64_t n = p * q;
+    mpz_t n;
+    mpz_init(n);
+    mpz_mul(n, p, q); // n = p * q
+    gmp_printf("n: %Zd\n\n", n);
 
     // Calculate λ(N)
-    uint64_t ln = lcm(p - 1, q - 1);
+    mpz_t lambda_n, gcd;
+    mpz_init(lambda_n);
+    mpz_init(gcd);
+    mpz_sub_ui(p, p, 1); // p = p - 1
+    mpz_sub_ui(q, q, 1); // q = q - 1
+    mpz_gcd(gcd, p, q); // gcd(p - 1, q - 1)
+    mpz_mul(lambda_n, p, q); // lcm(p, q) = p * q
+    mpz_div(lambda_n, lambda_n, gcd); // lcm(p, q) = (p * q) / gcd(p, q)
+    gmp_printf("λ(n): %Zd\n\n", lambda_n);
 
-    // Choose an integer E
-    uint64_t e = (uint64_t) pow(2, 16) + 1; // 65537
-    if (1 > e > ln) return EXIT_FAILURE;
-    //if (gcd(e, ln) != 1) return EXIT_FAILURE;
+    // Calculate E
+    mpz_t e;
+    mpz_init(e);
+    mpz_ui_pow_ui(e, 2, 16); // e = (2 ^ 16)
+    mpz_add_ui(e, e, 1); // e = (2 ^ 16) + 1
 
-    // Determine an integer D (is this correct?)
-    uint64_t d = mod_inverse(e, ln);
+    // Ensure 1 < e < λ(n)
+    if (mpz_cmp_ui(e, 1) < 0 || mpz_cmp(lambda_n, e) < 0) {
+        (void) fprintf(stderr, "error: `1 < e < λ(n)` is false!\n");
+        mpz_clear(e); mpz_clear(gcd); mpz_clear(lambda_n); mpz_clear(n); mpz_clear(q); mpz_clear(p);
+        return EXIT_FAILURE;
+    }
 
-    // Write pub/privkey
-    (void) fprintf(fp_pubkey, "e: %" PRIu64 ", n: %" PRIu64 "\n", e, n);
-    (void) fclose(fp_pubkey);
+    // Ensure gcd(e, λ(n)) = 1
+    mpz_gcd(gcd, e, lambda_n);
+    if (mpz_cmp_ui(gcd, 1) != 0) {
+        (void) fprintf(stderr, "`error: gcd(e, λ(n))` is not 1!\n");
+        mpz_clear(e); mpz_clear(gcd); mpz_clear(lambda_n); mpz_clear(n); mpz_clear(q); mpz_clear(p);
+        return EXIT_FAILURE;
+    }
+    gmp_printf("e: %Zd\n\n", e);
 
-    (void) fprintf(fp_privkey, "d: %" PRIu64 ", n: %" PRIu64 "\n", d, n);
-    (void) fclose(fp_privkey);
+    // Calculate D
+    mpz_t d;
+    mpz_init(d);
+    if (mpz_invert(d, e, lambda_n) == 0) {
+        (void) fprintf(stderr, "`error: `(e ^ -1) * (mod λ(n))` is not an inverse!\n");
+        mpz_clear(d); mpz_clear(e); mpz_clear(gcd); mpz_clear(lambda_n); mpz_clear(n); mpz_clear(q); mpz_clear(p);
+        return EXIT_FAILURE;
+    }
+    gmp_printf("d: %Zd\n\n", d);
 
-    // TODO: base64 encode the keys and stuff
+    // Clean up & quit
+    mpz_clear(d);
+    mpz_clear(e);
+    mpz_clear(gcd);
+    mpz_clear(lambda_n);
+    mpz_clear(n);
+    mpz_clear(q);
+    mpz_clear(p);
 
     return EXIT_SUCCESS;
 }
