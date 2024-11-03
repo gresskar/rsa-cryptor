@@ -8,6 +8,10 @@
 
 ## Building
 
+Make sure `clang`, `lld`, `compiler-rt` & `make` is installed
+
+Then build the programs by running:
+
 ```Shell
 make -j$(nproc)
 ```
